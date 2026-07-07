@@ -101,7 +101,7 @@ instant.toZonedDateTimeISO("America/New_York").toString()
 `Temporal.ZonedDateTime`表示某个时区的时间。它会在 ISO8601 的标准格式后面，添加时区后缀和历法后缀。
 
 ```javascript
-2020-08-05T20:06:13+09:00[Asia/Tokyo][u-ca=japanese]
+'2020-08-05T20:06:13+09:00[Asia/Tokyo][u-ca=japanese]'
 ```
 
 上面示例中，`2020-08-05T20:06:13+09:00`是 ISO8601 标准格式，`[Asia/Tokyo]`是时区后缀，`[u-ca=japanese]`是历法后缀，表示采用日本历法。
@@ -298,7 +298,7 @@ nextCNY.withCalendar("iso8601").toLocaleString() // 1/29/2025
 
 ## Temporal.Duration
 
-`Temporal.Duration`表示时长。
+`Temporal.Duration`表示一个持续的时间对象。
 
 ```javascript
 const duration = Temporal.Duration.from({
@@ -307,6 +307,17 @@ const duration = Temporal.Duration.from({
 });
 
 duration.total({ unit: 'second' }); // => 469200
+
+const durations = [
+  Temporal.Duration.from({ hours: 1 }),
+  Temporal.Duration.from({ hours: 2 }),
+  Temporal.Duration.from({ hours: 1, minutes: 30 }),
+  Temporal.Duration.from({ hours: 1, minutes: 45 }),
+];
+
+durations.sort(Temporal.Duration.compare);
+console.log(durations.map((d) => d.toString()));
+// [ 'PT1H', 'PT1H30M', 'PT1H45M', 'PT2H' ]
 ```
 
 ## Temporal.TimeZone
@@ -331,23 +342,6 @@ const date = cal.dateFromFields({ year: 1999, month: 12, day: 31 }, {});
 date.monthsInYear; // => 12
 date.daysInYear; // => 365
 ```
-
-## Temporal.Duration
-
-Temporal.Duration 表示一个持续的时间对象。
-
-```javascript
-const durations = [
-  Temporal.Duration.from({ hours: 1 }),
-  Temporal.Duration.from({ hours: 2 }),
-  Temporal.Duration.from({ hours: 1, minutes: 30 }),
-  Temporal.Duration.from({ hours: 1, minutes: 45 }),
-];
-
-durations.sort(Temporal.Duration.compare);
-console.log(durations.map((d) => d.toString()));
-// [ 'PT1H', 'PT1H30M', 'PT1H45M', 'PT2H' ]
-````
 
 ## 参考链接
 
