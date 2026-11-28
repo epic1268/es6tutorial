@@ -1,0 +1,178 @@
+name: Daily Fork & Sidebar Update
+
+# ============================================
+# 所有可配置参数（按需修改）
+# ============================================
+env:
+  # ---------- 任务1：同步上游仓库 ----------
+  UPSTREAM_REPO: "ruanyf/es6tutorial"   # 上游仓库
+  UPSTREAM_BRANCH: "gh-pages"                     # 上游分支名
+  SYNC_STRATEGY: "reset"                      # reset / merge / rebase
+  # ---------- 同步时保留的文件/文件夹 ----------
+  # 支持多个路径，用空格分隔（相对仓库根目录）
+  PRESERVE_PATHS: ".github _404.md"   # 示例
+
+  # ---------- 任务2：Docsify 侧边栏生成 ----------
+  SIDEBAR_ROOT_DIR: "."                       # 扫描根目录
+  SIDEBAR_OUTPUT: "_sidebar.md"               # 输出文件
+  SIDEBAR_MD_TITLE: "目录"                    # 侧边栏顶部标题
+
+  # ---------- 侧边栏配置（JSON） ----------
+  # exclude_dirs  : 排除的文件夹
+  # exclude_files : 排除的文件（支持通配符扩展名，如 "*.log"）
+  # include_dirs  : 强制包含的文件夹
+  # include_files : 强制包含的文件
+  # custom_sidebar: 完全自定义结构（存在时将忽略自动扫描）
+  SIDEBAR_CONFIG_JSON: >
+    {
+      "exclude_dirs": ["node_modules", ".git"],
+      "exclude_files": ["CHANGELOG.md", "*.log"],
+      "include_files": ["readme.md"],
+      "skip_empty_dirs": true,
+      "link_dirs_to_readme": false
+    }
+  
+    
+on:
+  push:
+    branches:
+      - gh-pages
+  schedule:
+    - cron: '0 0 * * *'        # 每天 UTC 0 点执行
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: '上游仓库 (owner/repo)'
+        required: false
+      sidebar_config_json:
+        description: '侧边栏配置 JSON（覆盖默认配置）'
+        required: false
+
+jobs:
+  daily-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ========== 打印参数（可选，便于调试） ==========
+      - name: 打印配置参数
+        run: |
+          echo "UPSTREAM_REPO=${UPSTREAM_REPO}"
+          echo "UPSTREAM_BRANCH=${UPSTREAM_BRANCH}"
+          echo "SYNC_STRATEGY=${SYNC_STRATEGY}"
+          echo "SIDEBAR_ROOT_DIR=${SIDEBAR_ROOT_DIR}"
+          echo "SIDEBAR_OUTPUT=${SIDEBAR_OUTPUT}"
+          echo "SIDEBAR_MD_TITLE=${SIDEBAR_MD_TITLE}"
+          echo "SIDEBAR_CONFIG_JSON=$SIDEBAR_CONFIG_JSON"
+
+      # ========== 任务1：同步上游代码 ==========
+      - name: 同步上游仓库
+        env:
+          UPSTREAM: ${{ github.event.inputs.upstream_repo || env.UPSTREAM_REPO }}
+          BRANCH: ${{ github.event.inputs.upstream_branch || env.UPSTREAM_BRANCH }}
+          STRATEGY: ${{ github.event.inputs.sync_strategy || env.SYNC_STRATEGY }}
+          PRESERVE: ${{ env.PRESERVE_PATHS }}       # 待保留的路径列表
+        run: |
+          echo "::group::添加上游 remote"
+          if git remote | grep -q upstream; then
+            git remote remove upstream
+          fi
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          echo "::endgroup::"
+
+          echo "::group::拉取上游更新"
+          git fetch upstream "${BRANCH}"
+          echo "::endgroup::"
+
+          echo "::group::执行同步策略：${STRATEGY}"
+          case "${STRATEGY}" in
+            reset)
+              # ----- 备份需要保留的文件/文件夹 -----
+              # 如果 PRESERVE 未设置，则默认只保留 .github
+              if [ -z "$PRESERVE" ]; then
+                PRESERVE=".github"
+              fi
+
+              echo "准备备份以下路径：${PRESERVE}"
+              BACKUP_DIR=$(mktemp -d)
+              for path in $PRESERVE; do
+                if [ -e "$path" ]; then
+                  # 保持目录结构，复制到临时目录
+                  mkdir -p "$(dirname "${BACKUP_DIR}/${path}")"
+                  cp -r "$path" "${BACKUP_DIR}/${path}"
+                  echo "✓ 已备份: $path"
+                else
+                  echo "⚠ 路径不存在，跳过备份: $path"
+                fi
+              done
+
+              # ----- 强制重置到上游分支 -----
+              git reset --hard "upstream/${BRANCH}"
+
+              # ----- 恢复备份的文件/文件夹 -----
+              for path in $PRESERVE; do
+                src="${BACKUP_DIR}/${path}"
+                if [ -e "$src" ]; then
+                  # 如果目标位置是已存在的文件夹，先删除再复制
+                  rm -rf "$path"
+                  cp -r "$src" "$(dirname "$path")"
+                  echo "✓ 已恢复: $path"
+                fi
+              done
+
+              # 暂存恢复的内容（由后续提交步骤统一处理）
+              for path in $PRESERVE; do
+                if [ -e "$path" ]; then
+                  git add "$path"
+                fi
+              done
+
+              rm -rf "$BACKUP_DIR"
+              ;;
+            rebase)
+              git rebase "upstream/${BRANCH}" --strategy-option=theirs || {
+                echo "::error::Rebase 冲突未能自动解决"
+                exit 1
+              }
+              ;;
+            merge|*)
+              git merge "upstream/${BRANCH}" --no-edit -X theirs || {
+                echo "::error::Merge 冲突未能自动解决"
+                exit 1
+              }
+              ;;
+          esac
+          echo "::endgroup::"
+
+      # ========== 任务2：生成 Docsify 侧边栏 ==========
+      - name: 生成侧边栏
+        env:
+          ROOT: ${{ env.SIDEBAR_ROOT_DIR }}
+          OUTPUT: ${{ env.SIDEBAR_OUTPUT }}
+          TITLE: ${{ env.SIDEBAR_MD_TITLE }}
+          CONFIG_JSON: ${{ github.event.inputs.sidebar_config_json || env.SIDEBAR_CONFIG_JSON }}
+        run: |
+          python3 .github/scripts/generate_sidebar.py \
+            --root "$ROOT" \
+            --output "$OUTPUT" \
+            --title "$TITLE" \
+            --config-json "$CONFIG_JSON"
+
+      # ========== 提交所有变更 ==========
+      - name: 提交并推送
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "没有变更，跳过提交"
+          else
+            git commit -m "🤖 自动更新：同步上游 & 侧边栏 $(date +'%Y-%m-%d')"
+            git push --force
+          fi
